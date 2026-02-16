@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:;">
+    <title>Passport Photo Creator</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <header>
+        <h1>Passport Photo Creator</h1>
+        <p class="privacy-notice">🔒 Your privacy: Photos never leave your device • No data uploaded or stored</p>
+        <nav id="progress-indicator">
+            <div class="step-indicator active" data-step="1">1. Capture</div>
+            <div class="step-indicator" data-step="2">2. Review</div>
+            <div class="step-indicator" data-step="3">3. Background</div>
+            <div class="step-indicator" data-step="4">4. Size</div>
+            <div class="step-indicator" data-step="5">5. Download</div>
+        </nav>
+    </header>
+    
+    <main id="app-container">
+        <!-- Step 1: Camera Capture -->
+        <section id="step-camera" class="step active">
+            <div class="step-content">
+                <h2>Step 1: Capture Your Photo</h2>
+                <p class="instructions">Position yourself in good lighting with your face clearly visible. Keep a neutral expression.</p>
+                
+                <div class="video-container">
+                    <video id="webcam" autoplay playsinline></video>
+                    <canvas id="photo-canvas" hidden></canvas>
+                    <div id="camera-error" class="error-message hidden"></div>
+                </div>
+                
+                <div class="controls">
+                    <button id="capture-btn" class="btn btn-primary">📷 Capture Photo</button>
+                    <button id="switch-camera-btn" class="btn btn-secondary">🔄 Switch Camera</button>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Step 2: Photo Review -->
+        <section id="step-review" class="step hidden">
+            <div class="step-content">
+                <h2>Step 2: Review Your Photo</h2>
+                <p class="instructions">Make sure your face is clearly visible and well-lit.</p>
+                
+                <div class="image-preview">
+                    <img id="captured-photo" alt="Captured photo">
+                </div>
+                
+                <div class="controls">
+                    <button id="use-photo-btn" class="btn btn-primary">✓ Use This Photo</button>
+                    <button id="retake-btn" class="btn btn-secondary">↺ Retake</button>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Step 3: Background Removal -->
+        <section id="step-background" class="step hidden">
+            <div class="step-content">
+                <h2>Step 3: Background Removal</h2>
+                <p class="instructions">Select a background color for your passport photo.</p>
+                
+                <div class="image-preview">
+                    <canvas id="processed-canvas"></canvas>
+                    <div id="loading-indicator" class="loading hidden">
+                        <div class="spinner"></div>
+                        <p>Processing image...</p>
+                    </div>
+                </div>
+                
+                <div class="color-selector">
+                    <h3>Background Color</h3>
+                    <div class="preset-colors">
+                        <button class="color-preset active" data-color="#FFFFFF" style="background-color: #FFFFFF;">White</button>
+                        <button class="color-preset" data-color="#E5E5E5" style="background-color: #E5E5E5;">Gray</button>
+                        <button class="color-preset" data-color="#C5E1F5" style="background-color: #C5E1F5;">Blue</button>
+                        <button class="color-preset" data-color="#FFEEEE" style="background-color: #FFEEEE;">Light Pink</button>
+                    </div>
+                    <div class="custom-color">
+                        <label for="custom-color">Custom:</label>
+                        <input type="color" id="custom-color" value="#FFFFFF">
+                        <span id="color-value">#FFFFFF</span>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="apply-background-btn" class="btn btn-primary">Next: Size & Crop →</button>
+                    <button id="back-to-review-btn" class="btn btn-secondary">← Back</button>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Step 4: Sizing -->
+        <section id="step-sizing" class="step hidden">
+            <div class="step-content">
+                <h2>Step 4: Size & Crop</h2>
+                <p class="instructions">Select your country's passport photo standard and adjust the crop.</p>
+                
+                <div class="size-selector">
+                    <label for="country-select">Country/Standard:</label>
+                    <select id="country-select">
+                        <option value="us">United States (2x2 inch / 51x51 mm)</option>
+                        <option value="eu">European Union (35x45 mm)</option>
+                        <option value="uk">United Kingdom (35x45 mm)</option>
+                        <option value="india">India (35x45 mm)</option>
+                        <option value="china">China (33x48 mm)</option>
+                        <option value="canada">Canada (50x70 mm)</option>
+                        <option value="australia">Australia (35x45 mm)</option>
+                        <option value="japan">Japan (35x45 mm)</option>
+                    </select>
+                </div>
+                
+                <div class="image-preview">
+                    <canvas id="crop-canvas"></canvas>
+                    <div id="crop-guide" class="crop-guide">
+                        <div class="head-guide"></div>
+                        <div class="eye-line"></div>
+                    </div>
+                </div>
+                
+                <div class="crop-controls">
+                    <h3>Adjust Position</h3>
+                    <label for="scale-slider">Scale:</label>
+                    <input type="range" id="scale-slider" min="0.5" max="2" step="0.05" value="1">
+                    <br>
+                    <label for="x-slider">Horizontal:</label>
+                    <input type="range" id="x-slider" min="-200" max="200" step="5" value="0">
+                    <br>
+                    <label for="y-slider">Vertical:</label>
+                    <input type="range" id="y-slider" min="-200" max="200" step="5" value="0">
+                </div>
+                
+                <div class="controls">
+                    <button id="apply-crop-btn" class="btn btn-primary">Next: Download →</button>
+                    <button id="back-to-background-btn" class="btn btn-secondary">← Back</button>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Step 5: Download -->
+        <section id="step-download" class="step hidden">
+            <div class="step-content">
+                <h2>Step 5: Download Your Photo</h2>
+                <p class="instructions">Your passport photo is ready! Download it in your preferred format.</p>
+                
+                <div class="image-preview">
+                    <canvas id="final-canvas"></canvas>
+                </div>
+                
+                <div class="photo-info">
+                    <h3>Photo Specifications</h3>
+                    <div id="spec-details">
+                        <p><strong>Size:</strong> <span id="spec-size">-</span></p>
+                        <p><strong>Dimensions:</strong> <span id="spec-dimensions">-</span></p>
+                        <p><strong>Background:</strong> <span id="spec-background">-</span></p>
+                        <p><strong>Format:</strong> JPEG at 300 DPI</p>
+                    </div>
+                </div>
+                
+                <div class="controls">
+                    <button id="download-jpg-btn" class="btn btn-primary">⬇ Download JPEG</button>
+                    <button id="download-png-btn" class="btn btn-secondary">⬇ Download PNG</button>
+                    <button id="start-over-btn" class="btn btn-tertiary">↺ Start Over</button>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <footer>
+        <p>Free passport photo creator - No data uploaded or stored</p>
+        <p class="footer-links">
+            <a href="https://github.com/factory-droid" target="_blank" rel="noopener">GitHub</a>
+        </p>
+    </footer>
+    
+    <!-- MediaPipe Selfie Segmentation -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    
+    <!-- Application Modules -->
+    <script src="js/camera.js"></script>
+    <script src="js/segmentation.js"></script>
+    <script src="js/cropping.js"></script>
+    <script src="js/export.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
