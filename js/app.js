@@ -78,6 +78,9 @@ function handlePhotoCapture(photoData) {
 }
 
 function handleUsePhoto() {
+    const applyBackgroundBtn = document.getElementById('apply-background-btn');
+    applyBackgroundBtn.disabled = true;
+
     // Move to background step
     goToStep(3);
     
@@ -87,6 +90,9 @@ function handleUsePhoto() {
 
 async function processBackgroundRemoval() {
     const loadingIndicator = document.getElementById('loading-indicator');
+    const applyBackgroundBtn = document.getElementById('apply-background-btn');
+
+    applyBackgroundBtn.disabled = true;
     loadingIndicator.classList.remove('hidden');
     
     try {
@@ -95,14 +101,21 @@ async function processBackgroundRemoval() {
         await Segmentation.processImage(AppState.capturedImage, AppState.backgroundColor);
         
         loadingIndicator.classList.add('hidden');
+        applyBackgroundBtn.disabled = false;
     } catch (error) {
         console.error('Background removal failed:', error);
         showError('Background removal failed. Please try again or retake your photo.');
         loadingIndicator.classList.add('hidden');
+        applyBackgroundBtn.disabled = true;
     }
 }
 
 function handleBackgroundApplied(processedImage) {
+    if (!processedImage || !processedImage.dataUrl) {
+        showError('Background processing is not complete yet. Please wait and try again.');
+        return;
+    }
+
     AppState.processedImage = processedImage;
     
     // Move to cropping step
@@ -237,6 +250,7 @@ function resetApplication() {
     document.querySelector('.color-preset[data-color="#FFFFFF"]').classList.add('active');
     document.getElementById('custom-color').value = '#FFFFFF';
     document.getElementById('color-value').textContent = '#FFFFFF';
+    document.getElementById('apply-background-btn').disabled = false;
     
     // Reset country selection
     document.getElementById('country-select').value = 'us';
