@@ -63,15 +63,15 @@ const Segmentation = {
         return new Promise((resolve, reject) => {
             img.onload = async () => {
                 try {
-                    // Process image with MediaPipe
-                    await this.segmenter.send({ image: img });
-                    
-                    // Store the result
+                    // Set up results handler BEFORE sending image
                     this.segmenter.onResults((results) => {
                         this.currentMask = results.segmentationMask;
                         this.applyBackground(backgroundColor);
                         resolve(true);
                     });
+                    
+                    // Process image with MediaPipe
+                    await this.segmenter.send({ image: img });
                 } catch (error) {
                     console.error('Error processing image:', error);
                     reject(error);
