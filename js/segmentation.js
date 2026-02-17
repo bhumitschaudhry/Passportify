@@ -1,5 +1,7 @@
 // Segmentation Module - Handles background removal with a refined alpha-matte pipeline.
 
+const MEDIAPIPE_SEGMENTATION_VERSION = '0.1';
+
 const Segmentation = {
     model: null,
     isModelLoaded: false,
@@ -41,12 +43,13 @@ const Segmentation = {
             }
 
             const model = new SelfieSegmentation({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@${MEDIAPIPE_SEGMENTATION_VERSION}/${file}`
             });
 
             model.setOptions({
-                modelSelection: 1,
-                selfieMode: true
+                // General model works better for portrait/passport framing than landscape mode.
+                modelSelection: 0,
+                selfieMode: false
             });
 
             model.onResults((results) => {
@@ -206,13 +209,137 @@ const Segmentation = {
 
         const rawMask = this.maskCtx.getImageData(0, 0, width, height).data;
         const confidence = new Float32Array(width * height);
+        const channels = this.detectMaskChannels(rawMask);
 
         for (let i = 0, p = 0; i < rawMask.length; i += 4, p++) {
-            const luma = (rawMask[i] + rawMask[i + 1] + rawMask[i + 2]) / (3 * 255);
-            confidence[p] = luma;
+            const r = rawMask[i] / 255;
+            const g = rawMask[i + 1] / 255;
+            const b = rawMask[i + 2] / 255;
+            const alpha = rawMask[i + 3] / 255;
+            const colorSignal = Math.max(r, g, b);
+
+            if (channels.useAlphaOnly) {
+                confidence[p] = alpha;
+                continue;
+            }
+
+            if (channels.useColorOnly) {
+                confidence[p] = colorSignal;
+                continue;
+            }
+
+            confidence[p] = (channels.colorWeight * colorSignal) + (channels.alphaWeight * alpha);
         }
 
+        this.normalizeMask(confidence);
+        this.maybeInvertMask(confidence, width, height);
         return confidence;
+    },
+
+    detectMaskChannels(rawMask) {
+        let minColor = 1;
+        let maxColor = 0;
+        let minAlpha = 1;
+        let maxAlpha = 0;
+
+        for (let i = 0; i < rawMask.length; i += 4) {
+            const color = Math.max(rawMask[i], rawMask[i + 1], rawMask[i + 2]) / 255;
+            const alpha = rawMask[i + 3] / 255;
+
+            if (color < minColor) {
+                minColor = color;
+            }
+            if (color > maxColor) {
+                maxColor = color;
+            }
+            if (alpha < minAlpha) {
+                minAlpha = alpha;
+            }
+            if (alpha > maxAlpha) {
+                maxAlpha = alpha;
+            }
+        }
+
+        const colorRange = maxColor - minColor;
+        const alphaRange = maxAlpha - minAlpha;
+        const rangeTotal = Math.max(0.0001, colorRange + alphaRange);
+
+        return {
+            useAlphaOnly: alphaRange > 0.05 && colorRange < 0.01,
+            useColorOnly: colorRange > 0.05 && alphaRange < 0.01,
+            colorWeight: colorRange / rangeTotal,
+            alphaWeight: alphaRange / rangeTotal
+        };
+    },
+
+    normalizeMask(mask) {
+        let minValue = 1;
+        let maxValue = 0;
+
+        for (let i = 0; i < mask.length; i++) {
+            const value = mask[i];
+            if (value < minValue) {
+                minValue = value;
+            }
+            if (value > maxValue) {
+                maxValue = value;
+            }
+        }
+
+        const range = maxValue - minValue;
+        if (range < 0.12) {
+            return;
+        }
+
+        if (minValue <= 0.03 && maxValue >= 0.97) {
+            return;
+        }
+
+        for (let i = 0; i < mask.length; i++) {
+            mask[i] = (mask[i] - minValue) / range;
+        }
+    },
+
+    maybeInvertMask(mask, width, height) {
+        const centerStartX = Math.floor(width * 0.35);
+        const centerEndX = Math.ceil(width * 0.65);
+        const centerStartY = Math.floor(height * 0.25);
+        const centerEndY = Math.ceil(height * 0.75);
+
+        let centerSum = 0;
+        let centerCount = 0;
+        let edgeSum = 0;
+        let edgeCount = 0;
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const value = mask[(y * width) + x];
+                const isCenter = x >= centerStartX && x <= centerEndX && y >= centerStartY && y <= centerEndY;
+
+                if (isCenter) {
+                    centerSum += value;
+                    centerCount++;
+                } else {
+                    edgeSum += value;
+                    edgeCount++;
+                }
+            }
+        }
+
+        if (!centerCount || !edgeCount) {
+            return;
+        }
+
+        const centerMean = centerSum / centerCount;
+        const edgeMean = edgeSum / edgeCount;
+
+        if (centerMean + 0.05 >= edgeMean) {
+            return;
+        }
+
+        for (let i = 0; i < mask.length; i++) {
+            mask[i] = 1 - mask[i];
+        }
     },
 
     refineMask(confidenceMask, width, height) {
