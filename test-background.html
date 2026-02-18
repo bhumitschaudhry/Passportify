@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Background Removal Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-container {
+            border: 2px solid #ccc;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        canvas {
+            max-width: 100%;
+            border: 1px solid #ddd;
+            display: block;
+            margin: 10px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background: #f8f9fa;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <h1>Background Removal Test</h1>
+
+    <div class="test-container">
+        <h2>Test 1: MediaPipe Library Loading</h2>
+        <div id="mediapipe-status" class="status info">Checking MediaPipe library...</div>
+        <button onclick="testMediaPipeLoading()">Test MediaPipe Loading</button>
+    </div>
+
+    <div class="test-container">
+        <h2>Test 2: Background Removal with Sample Image</h2>
+        <div id="test-status" class="status info">Ready to test</div>
+        <canvas id="test-canvas"></canvas>
+        <button onclick="testBackgroundRemoval()">Test Background Removal</button>
+    </div>
+
+    <div class="test-container">
+        <h2>Console Log</h2>
+        <div id="console-log" style="background: #f8f9fa; padding: 10px; border-radius: 4px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px;"></div>
+    </div>
+
+    <!-- MediaPipe Selfie Segmentation -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js" crossorigin="anonymous"></script>
+
+    <script>
+        // Override console.log to display in the page
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        const consoleLogDiv = document.getElementById('console-log');
+
+        function addLogEntry(message, type = 'log') {
+            const entry = document.createElement('div');
+            entry.style.color = type === 'error' ? 'red' : type === 'warn' ? 'orange' : 'black';
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            consoleLogDiv.appendChild(entry);
+            consoleLogDiv.scrollTop = consoleLogDiv.scrollHeight;
+        }
+
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            addLogEntry(args.join(' '), 'log');
+        };
+
+        console.error = function(...args) {
+            originalError.apply(console, args);
+            addLogEntry(args.join(' '), 'error');
+        };
+
+        console.warn = function(...args) {
+            originalWarn.apply(console, args);
+            addLogEntry(args.join(' '), 'warn');
+        };
+
+        // Test MediaPipe loading
+        async function testMediaPipeLoading() {
+            const statusDiv = document.getElementById('mediapipe-status');
+            statusDiv.textContent = 'Loading MediaPipe...';
+            statusDiv.className = 'status info';
+
+            try {
+                console.log('Checking if SelfieSegmentation is available...');
+
+                if (typeof SelfieSegmentation !== 'function') {
+                    throw new Error('SelfieSegmentation is not available');
+                }
+
+                console.log('SelfieSegmentation is available, creating instance...');
+
+                const selfieSegmentation = new SelfieSegmentation({
+                    locateFile: (file) => {
+                        const url = `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`;
+                        console.log('Loading file:', url);
+                        return url;
+                    }
+                });
+
+                console.log('Setting options...');
+                selfieSegmentation.setOptions({
+                    modelSelection: 0,
+                    selfieMode: false
+                });
+
+                console.log('Setting onResults callback...');
+                selfieSegmentation.onResults((results) => {
+                    console.log('Received results from MediaPipe:', results);
+                });
+
+                statusDiv.textContent = '✓ MediaPipe loaded successfully!';
+                statusDiv.className = 'status success';
+
+                return selfieSegmentation;
+            } catch (error) {
+                console.error('Error loading MediaPipe:', error);
+                statusDiv.textContent = `✗ Error: ${error.message}`;
+                statusDiv.className = 'status error';
+                return null;
+            }
+        }
+
+        // Test background removal
+        async function testBackgroundRemoval() {
+            const statusDiv = document.getElementById('test-status');
+            const canvas = document.getElementById('test-canvas');
+            const ctx = canvas.getContext('2d');
+
+            statusDiv.textContent = 'Initializing...';
+            statusDiv.className = 'status info';
+
+            try {
+                // Create a simple test image
+                canvas.width = 640;
+                canvas.height = 480;
+
+                // Draw a test pattern
+                ctx.fillStyle = '#FF0000';
+                ctx.fillRect(0, 0, 320, 480);
+                ctx.fillStyle = '#00FF00';
+                ctx.fillRect(320, 0, 320, 480);
+
+                // Draw a simple "person" in the middle
+                ctx.fillStyle = '#0000FF';
+                ctx.beginPath();
+                ctx.arc(320, 240, 100, 0, Math.PI * 2);
+                ctx.fill();
+
+                console.log('Test image created');
+
+                // Load MediaPipe
+                const model = await testMediaPipeLoading();
+                if (!model) {
+                    throw new Error('Failed to load MediaPipe');
+                }
+
+                statusDiv.textContent = 'Processing image...';
+                console.log('Sending image to MediaPipe...');
+
+                await model.send({ image: canvas });
+
+                statusDiv.textContent = '✓ Test completed! Check console for results.';
+                statusDiv.className = 'status success';
+            } catch (error) {
+                console.error('Error in background removal test:', error);
+                statusDiv.textContent = `✗ Error: ${error.message}`;
+                statusDiv.className = 'status error';
+            }
+        }
+
+        // Auto-check MediaPipe on load
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                if (typeof SelfieSegmentation === 'function') {
+                    document.getElementById('mediapipe-status').textContent = '✓ MediaPipe library loaded';
+                    document.getElementById('mediapipe-status').className = 'status success';
+                } else {
+                    document.getElementById('mediapipe-status').textContent = '✗ MediaPipe library not loaded';
+                    document.getElementById('mediapipe-status').className = 'status error';
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

@@ -94,34 +94,78 @@ async function processBackgroundRemoval() {
 
     applyBackgroundBtn.disabled = true;
     loadingIndicator.classList.remove('hidden');
-    
+
+    console.log('Starting background removal process...');
+
     try {
         // Load model and process image
-        await Segmentation.loadModel();
+        console.log('Loading MediaPipe model...');
+        const modelLoaded = await Segmentation.loadModel();
+
+        if (!modelLoaded) {
+            throw new Error('Failed to load the background removal model. Please refresh the page and try again.');
+        }
+
+        console.log('Model loaded successfully, processing image...');
         await Segmentation.processImage(AppState.capturedImage, AppState.backgroundColor);
-        
+
+        console.log('Background removal completed successfully');
+
         loadingIndicator.classList.add('hidden');
         applyBackgroundBtn.disabled = false;
+
+        // Auto-enable the continue button after a short delay
+        setTimeout(() => {
+            applyBackgroundBtn.disabled = false;
+        }, 500);
     } catch (error) {
         console.error('Background removal failed:', error);
-        showError('Background removal failed. Please try again or retake your photo.');
+        let errorMessage = 'Background removal failed. ';
+
+        if (error.message.includes('not available')) {
+            errorMessage += 'The MediaPipe library failed to load. Please check your internet connection and refresh the page.';
+        } else if (error.message.includes('network') || error.message.includes('fetch')) {
+            errorMessage += 'Network error. Please check your internet connection and try again.';
+        } else if (error.message.includes('Invalid image')) {
+            errorMessage += 'The captured image is invalid. Please retake the photo.';
+        } else {
+            errorMessage += 'Please try again or retake your photo.';
+        }
+
+        showError(errorMessage);
         loadingIndicator.classList.add('hidden');
         applyBackgroundBtn.disabled = true;
     }
 }
 
 function handleBackgroundApplied(processedImage) {
-    if (!processedImage || !processedImage.dataUrl) {
+    console.log('handleBackgroundApplied called', processedImage);
+
+    if (!processedImage) {
+        console.error('processedImage is null or undefined');
+        showError('No processed image available. Please try the background removal again.');
+        return;
+    }
+
+    if (!processedImage.dataUrl) {
+        console.error('processedImage does not have dataUrl', processedImage);
         showError('Background processing is not complete yet. Please wait and try again.');
         return;
     }
 
+    console.log('Processed image received successfully:', {
+        width: processedImage.width,
+        height: processedImage.height,
+        hasImageData: !!processedImage.imageData
+    });
+
     AppState.processedImage = processedImage;
-    
+
     // Move to cropping step
     goToStep(4);
-    
+
     // Load image into cropping module
+    console.log('Loading image into cropping module...');
     Cropping.loadImage(processedImage);
 }
 

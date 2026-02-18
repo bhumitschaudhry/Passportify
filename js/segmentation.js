@@ -42,24 +42,33 @@ const Segmentation = {
                 throw new Error('MediaPipe SelfieSegmentation is not available.');
             }
 
+            console.log('Initializing MediaPipe SelfieSegmentation...');
+
             const model = new SelfieSegmentation({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@${MEDIAPIPE_SEGMENTATION_VERSION}/${file}`
             });
 
+            console.log('Setting model options...');
             model.setOptions({
                 // General model works better for portrait/passport framing than landscape mode.
                 modelSelection: 0,
                 selfieMode: false
             });
 
+            console.log('Setting onResults callback...');
             model.onResults((results) => {
+                console.log('Segmentation results received:', results);
                 this.handleResults(results);
             });
 
-            if (typeof model.initialize === 'function') {
-                await model.initialize();
+            // MediaPipe SelfieSegmentation doesn't have an initialize() method
+            // The model is initialized automatically when we send the first image
+            // Just verify the model was created successfully
+            if (!model) {
+                throw new Error('Failed to create MediaPipe SelfieSegmentation instance.');
             }
 
+            console.log('MediaPipe SelfieSegmentation initialized successfully');
             this.model = model;
             this.isModelLoaded = true;
             return true;
@@ -78,10 +87,15 @@ const Segmentation = {
     },
 
     async processImage(imageData, backgroundColor = '#FFFFFF') {
+        console.log('processImage called with backgroundColor:', backgroundColor);
+
         const modelLoaded = await this.loadModel();
         if (!modelLoaded || !this.model) {
+            console.error('Model not loaded, cannot process image');
             throw new Error('Failed to load segmentation model.');
         }
+
+        console.log('Model loaded, preparing to process image...');
 
         if (this.pendingJob) {
             this.pendingJob.reject(new Error('Background removal was interrupted by a new request.'));
@@ -92,12 +106,17 @@ const Segmentation = {
         const source = await this.prepareSource(imageData);
         this.sourcePixels = source.pixels;
 
+        console.log('Source prepared, image dimensions:', this.imageWidth, 'x', this.imageHeight);
+
         return new Promise(async (resolve, reject) => {
             this.pendingJob = { resolve, reject };
 
             try {
+                console.log('Sending image to MediaPipe model...');
                 await this.model.send({ image: source.input });
+                console.log('Image sent to model, waiting for results...');
             } catch (error) {
+                console.error('Error sending image to model:', error);
                 if (this.pendingJob) {
                     this.pendingJob = null;
                 }
@@ -107,21 +126,30 @@ const Segmentation = {
     },
 
     async prepareSource(imageData) {
+        console.log('prepareSource called');
+
         if (!imageData || (!imageData.imageData && !imageData.dataUrl)) {
+            console.error('Invalid image data:', imageData);
             throw new Error('Invalid image data received for segmentation.');
         }
 
         let width = imageData.width || (imageData.imageData ? imageData.imageData.width : 0);
         let height = imageData.height || (imageData.imageData ? imageData.imageData.height : 0);
 
-        this.sourceCtx.clearRect(0, 0, this.sourceCanvas.width, this.sourceCanvas.height);
+        console.log('Image dimensions from data:', width, 'x', height);
+
+        // Clear the source canvas
+        this.sourceCtx.clearRect(0, 0, this.sourceCanvas.width || 1, this.sourceCanvas.height || 1);
 
         if (imageData.dataUrl) {
+            console.log('Loading image from dataUrl');
             const img = await this.loadImageFromDataUrl(imageData.dataUrl);
             if (!width || !height) {
                 width = img.naturalWidth || img.width;
                 height = img.naturalHeight || img.height;
             }
+
+            console.log('Loaded image dimensions:', width, 'x', height);
 
             this.sourceCanvas.width = width;
             this.sourceCanvas.height = height;
@@ -129,20 +157,32 @@ const Segmentation = {
         } else {
             width = imageData.imageData.width;
             height = imageData.imageData.height;
+            console.log('Using imageData dimensions:', width, 'x', height);
+
             this.sourceCanvas.width = width;
             this.sourceCanvas.height = height;
             this.sourceCtx.putImageData(imageData.imageData, 0, 0);
         }
 
         if (!width || !height) {
+            console.error('Invalid dimensions after processing:', width, height);
             throw new Error('Source image has invalid dimensions.');
         }
 
         const normalizedImage = this.sourceCtx.getImageData(0, 0, width, height);
         this.imageWidth = width;
         this.imageHeight = height;
+
+        // Ensure the output canvas is properly sized
         this.canvas.width = width;
         this.canvas.height = height;
+
+        console.log('Source prepared successfully:', {
+            width: this.imageWidth,
+            height: this.imageHeight,
+            canvasSize: `${this.canvas.width}x${this.canvas.height}`,
+            sourcePixelsLength: normalizedImage.data.length
+        });
 
         return {
             input: this.sourceCanvas,
@@ -151,7 +191,10 @@ const Segmentation = {
     },
 
     handleResults(results) {
+        console.log('handleResults called');
+
         if (!this.pendingJob) {
+            console.warn('No pending job, ignoring results');
             return;
         }
 
@@ -159,27 +202,35 @@ const Segmentation = {
         this.pendingJob = null;
 
         try {
+            console.log('Processing segmentation results...');
+
             if (!results || !results.segmentationMask) {
+                console.error('Invalid results:', results);
                 throw new Error('Segmentation did not return a mask.');
             }
 
             if (!this.sourcePixels || !this.imageWidth || !this.imageHeight) {
+                console.error('Source not initialized. sourcePixels:', !!this.sourcePixels, 'dimensions:', this.imageWidth, this.imageHeight);
                 throw new Error('Source image is not initialized.');
             }
 
+            console.log('Extracting confidence mask...');
             const confidenceMask = this.extractConfidenceMask(
                 results.segmentationMask,
                 this.imageWidth,
                 this.imageHeight
             );
 
+            console.log('Refining mask...');
             this.refinedMask = this.refineMask(confidenceMask, this.imageWidth, this.imageHeight);
 
+            console.log('Rendering background...');
             const rendered = this.renderBackground(this.currentBackgroundColor);
             if (!rendered) {
                 throw new Error('Failed to render processed image.');
             }
 
+            console.log('Segmentation completed successfully');
             activeJob.resolve(true);
         } catch (error) {
             console.error('Error handling segmentation results:', error);
@@ -436,8 +487,21 @@ const Segmentation = {
 
     renderBackground(color) {
         if (!this.refinedMask || !this.sourcePixels || !this.imageWidth || !this.imageHeight) {
+            console.error('renderBackground: Missing required data', {
+                hasRefinedMask: !!this.refinedMask,
+                hasSourcePixels: !!this.sourcePixels,
+                width: this.imageWidth,
+                height: this.imageHeight
+            });
             return false;
         }
+
+        if (!this.canvas || !this.ctx) {
+            console.error('renderBackground: Canvas or context not initialized');
+            return false;
+        }
+
+        console.log('Rendering background with color:', color, 'canvas size:', this.canvas.width, 'x', this.canvas.height);
 
         this.currentBackgroundColor = this.normalizeHex(color);
         const bg = this.hexToRgb(this.currentBackgroundColor);
@@ -455,6 +519,7 @@ const Segmentation = {
         }
 
         this.ctx.putImageData(output, 0, 0);
+        console.log('Background rendered successfully');
         return true;
     },
 
