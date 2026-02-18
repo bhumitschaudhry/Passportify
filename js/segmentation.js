@@ -324,30 +324,35 @@ const Segmentation = {
     },
 
     normalizeMask(mask) {
-        let minValue = 1;
-        let maxValue = 0;
+        const histogram = new Array(256).fill(0);
 
         for (let i = 0; i < mask.length; i++) {
-            const value = mask[i];
-            if (value < minValue) {
-                minValue = value;
+            const bin = Math.min(255, Math.floor(mask[i] * 256));
+            histogram[bin]++;
+        }
+
+        let cumulativeCount = 0;
+        const totalPixels = mask.length;
+        let minValue = 0;
+        const lowPercentile = 0.01;
+        const highPercentile = 0.99;
+
+        for (let i = 0; i < 256; i++) {
+            cumulativeCount += histogram[i];
+            if (cumulativeCount >= totalPixels * lowPercentile && minValue === 0) {
+                minValue = i / 256;
             }
-            if (value > maxValue) {
-                maxValue = value;
+            if (cumulativeCount >= totalPixels * highPercentile) {
+                const maxValue = i / 256;
+                const range = maxValue - minValue;
+
+                if (range > 0.1) {
+                    for (let j = 0; j < mask.length; j++) {
+                        mask[j] = Math.min(1, Math.max(0, (mask[j] - minValue) / range));
+                    }
+                }
+                break;
             }
-        }
-
-        const range = maxValue - minValue;
-        if (range < 0.12) {
-            return;
-        }
-
-        if (minValue <= 0.03 && maxValue >= 0.97) {
-            return;
-        }
-
-        for (let i = 0; i < mask.length; i++) {
-            mask[i] = (mask[i] - minValue) / range;
         }
     },
 
@@ -358,8 +363,10 @@ const Segmentation = {
         const centerEndY = Math.ceil(height * 0.75);
 
         let centerSum = 0;
+        let centerSumSq = 0;
         let centerCount = 0;
         let edgeSum = 0;
+        let edgeSumSq = 0;
         let edgeCount = 0;
 
         for (let y = 0; y < height; y++) {
@@ -369,9 +376,11 @@ const Segmentation = {
 
                 if (isCenter) {
                     centerSum += value;
+                    centerSumSq += value * value;
                     centerCount++;
                 } else {
                     edgeSum += value;
+                    edgeSumSq += value * value;
                     edgeCount++;
                 }
             }
@@ -384,7 +393,15 @@ const Segmentation = {
         const centerMean = centerSum / centerCount;
         const edgeMean = edgeSum / edgeCount;
 
-        if (centerMean + 0.05 >= edgeMean) {
+        const centerVar = (centerSumSq / centerCount) - (centerMean * centerMean);
+        const edgeVar = (edgeSumSq / edgeCount) - (edgeMean * edgeMean);
+
+        const separation = Math.abs(centerMean - edgeMean);
+        const confidence = separation / Math.sqrt(Math.max(0.001, centerVar + edgeVar));
+
+        const isInverted = confidence > 0.8 && (centerMean + 0.03 < edgeMean);
+
+        if (!isInverted) {
             return;
         }
 
@@ -395,20 +412,21 @@ const Segmentation = {
 
     refineMask(confidenceMask, width, height) {
         const denoised = this.boxBlur(confidenceMask, width, height, 2);
-        const thresholded = new Float32Array(denoised.length);
 
-        const minForeground = 0.35;
-        const maxForeground = 0.7;
+        const { minForeground, maxForeground } = this.adaptiveThresholds(denoised, width, height);
+        const thresholded = new Float32Array(denoised.length);
 
         for (let i = 0; i < denoised.length; i++) {
             thresholded[i] = this.smoothstep(minForeground, maxForeground, denoised[i]);
         }
 
-        const feathered = this.boxBlur(thresholded, width, height, 1);
+        const morphological = this.morphologicalRefine(thresholded, width, height);
+
+        const feathered = this.boxBlur(morphological, width, height, 1);
         const refined = new Float32Array(thresholded.length);
 
         for (let i = 0; i < thresholded.length; i++) {
-            const base = thresholded[i];
+            const base = morphological[i];
 
             if (base <= 0.05) {
                 refined[i] = 0;
@@ -420,10 +438,191 @@ const Segmentation = {
                 continue;
             }
 
-            refined[i] = (0.65 * base) + (0.35 * feathered[i]);
+            const edgeWeight = this.detectEdgeRegion(base, denoised, i, width, height);
+            const blending = (0.6 * base) + (0.4 * feathered[i]);
+
+            refined[i] = edgeWeight > 0.5 ? (0.75 * base) + (0.25 * feathered[i]) : blending;
+        }
+
+        const edgeRefined = this.colorAwareEdgeRefinement(refined, width, height);
+        return edgeRefined;
+    },
+
+    adaptiveThresholds(mask, width, height) {
+        const histogram = new Array(100).fill(0);
+        const binSize = mask.length / 100;
+
+        for (let i = 0; i < mask.length; i++) {
+            const bin = Math.min(99, Math.floor(mask[i] * 100));
+            histogram[bin]++;
+        }
+
+        let cumulativeBackground = 0;
+        let cumulativeForeground = 0;
+        let backgroundCount = 0;
+        let foregroundCount = 0;
+
+        for (let i = 0; i < 100; i++) {
+            if (i < 35) {
+                cumulativeBackground += histogram[i] * (i / 100);
+                backgroundCount += histogram[i];
+            } else {
+                cumulativeForeground += histogram[i] * (i / 100);
+                foregroundCount += histogram[i];
+            }
+        }
+
+        const meanBackground = backgroundCount > 0 ? cumulativeBackground / backgroundCount : 0.2;
+        const meanForeground = foregroundCount > 0 ? cumulativeForeground / foregroundCount : 0.8;
+
+        const minForeground = Math.max(0.28, Math.min(0.38, meanBackground + 0.15));
+        const maxForeground = Math.max(0.6, Math.min(0.75, meanForeground - 0.08));
+
+        return { minForeground, maxForeground };
+    },
+
+    morphologicalRefine(mask, width, height) {
+        const opened = this.morphology(mask, width, height, 1, 'open');
+        const closed = this.morphology(opened, width, height, 1, 'close');
+        return closed;
+    },
+
+    morphology(mask, width, height, radius, operation) {
+        const size = width * height;
+        const output = new Float32Array(size);
+        const kernelSize = radius * 2 + 1;
+
+        const temp = new Float32Array(size);
+
+        for (let y = 0; y < height; y++) {
+            const rowStart = y * width;
+
+            for (let x = 0; x < width; x++) {
+                let val = mask[rowStart + x];
+
+                for (let k = -radius; k <= radius; k++) {
+                    const clampedX = Math.min(width - 1, Math.max(0, x + k));
+                    const neighbor = mask[rowStart + clampedX];
+
+                    if (operation === 'open' || operation === 'erode') {
+                        val = Math.min(val, neighbor);
+                    } else {
+                        val = Math.max(val, neighbor);
+                    }
+                }
+
+                temp[rowStart + x] = val;
+            }
+        }
+
+        for (let x = 0; x < width; x++) {
+            for (let y = 0; y < height; y++) {
+                let val = temp[y * width + x];
+
+                for (let k = -radius; k <= radius; k++) {
+                    const clampedY = Math.min(height - 1, Math.max(0, y + k));
+                    const neighbor = temp[clampedY * width + x];
+
+                    if (operation === 'close' || operation === 'dilate') {
+                        val = Math.max(val, neighbor);
+                    } else {
+                        val = Math.min(val, neighbor);
+                    }
+                }
+
+                output[y * width + x] = val;
+            }
+        }
+
+        return output;
+    },
+
+    detectEdgeRegion(maskValue, originalMask, index, width, height) {
+        const x = index % width;
+        const y = Math.floor(index / width);
+
+        if (x < 2 || x > width - 3 || y < 2 || y > height - 3) {
+            return 0.3;
+        }
+
+        let variance = 0;
+        const neighbors = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1];
+        const count = neighbors.length;
+        let sum = 0;
+        let sumSq = 0;
+
+        for (const offset of neighbors) {
+            const val = originalMask[index + offset];
+            sum += val;
+            sumSq += val * val;
+        }
+
+        const mean = sum / count;
+        variance = (sumSq / count) - (mean * mean);
+
+        const isEdge = variance > 0.02 && (maskValue > 0.3 && maskValue < 0.7);
+        return isEdge ? 1.0 : 0.0;
+    },
+
+    colorAwareEdgeRefinement(mask, width, height) {
+        if (!this.sourcePixels) {
+            return mask;
+        }
+
+        const refined = new Float32Array(mask.length);
+        const edgeRadius = 2;
+
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                const maskValue = mask[idx];
+
+                if (maskValue <= 0.1 || maskValue >= 0.9) {
+                    refined[idx] = maskValue;
+                    continue;
+                }
+
+                let minColorDistance = Infinity;
+                let maxColorDistance = 0;
+
+                for (let dy = -edgeRadius; dy <= edgeRadius; dy++) {
+                    for (let dx = -edgeRadius; dx <= edgeRadius; dx++) {
+                        const ny = Math.min(height - 1, Math.max(0, y + dy));
+                        const nx = Math.min(width - 1, Math.max(0, x + dx));
+                        const nidx = ny * width + nx;
+
+                        if (mask[nidx] <= 0.2 || mask[nidx] >= 0.8) {
+                            const dist = this.colorDistance(idx, nidx);
+                            if (mask[nidx] <= 0.2) {
+                                minColorDistance = Math.min(minColorDistance, dist);
+                            } else {
+                                maxColorDistance = Math.max(maxColorDistance, dist);
+                            }
+                        }
+                    }
+                }
+
+                if (minColorDistance < Infinity) {
+                    const proximityToForeground = minColorDistance / (minColorDistance + maxColorDistance + 0.001);
+                    refined[idx] = maskValue * (1 - 0.3 * (1 - proximityToForeground));
+                } else {
+                    refined[idx] = maskValue;
+                }
+            }
         }
 
         return refined;
+    },
+
+    colorDistance(idx1, idx2) {
+        const p1 = idx1 * 4;
+        const p2 = idx2 * 4;
+
+        const dr = this.sourcePixels[p1] - this.sourcePixels[p2];
+        const dg = this.sourcePixels[p1 + 1] - this.sourcePixels[p2 + 1];
+        const db = this.sourcePixels[p1 + 2] - this.sourcePixels[p2 + 2];
+
+        return Math.sqrt(dr * dr + dg * dg + db * db);
     },
 
     boxBlur(values, width, height, radius) {
